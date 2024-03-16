@@ -1,21 +1,21 @@
-import open3d as o3d
 import torch
 from tqdm import tqdm
 import numpy as np
 from easydict import EasyDict
-from sklearn.neighbors import KDTree
 
-from SemReg.group_match import query_local_signature, GroupingMatcher 
-from SemReg.gss_constructor import grab_gss, get_anchor_pts_with_labels_outdoor
-from SemReg.mask_matcher import maskmatcher_nn
+# SemReg
+from MLSemReg.group_match import query_local_signature, GroupingMatcher 
+from MLSemReg.gss_constructor import grab_gss, get_anchor_pts_with_labels_outdoor
+from MLSemReg.mask_matcher import maskmatcher_nn
 
-from utils_demo import vis_pcr_pcd
-from SC2PCR import SC2PCR
+from utils_demo import vis_pcr_pcd, get_cmd_config, DataLoader
 from utils.evaluator import PCRResultEvaluator
 
-evaluator = PCRResultEvaluator(5, 0.6, 0.6)
+# estimator
+from SC2PCR import SC2PCR
 
-from utils_demo import get_cmd_config, DataLoader
+
+evaluator = PCRResultEvaluator(5, 0.6, 0.6)
 
 
 def get_config():
@@ -36,18 +36,7 @@ def get_config():
     return  config_lsig, config_gss, config_mask_match
 
 
-def matcher_nn(desc_src, desc_dst):
-    desc_src_tensor = torch.from_numpy(desc_src).cuda()
-    desc_dst_tensor = torch.from_numpy(desc_dst).cuda()
-    dis_matrix = torch.norm(desc_src_tensor[:, None, ...] - desc_dst_tensor[None, ...], dim=-1)
-    idx_dst = torch.argmin(dis_matrix, dim=1).cpu()
-    corr_torch = torch.column_stack([torch.arange(len(desc_src_tensor)).reshape(-1, 1), idx_dst.reshape(-1, 1)])
-    corres = corr_torch.cpu().numpy()   
-    return corres
-
-
-
-def ml_SemReg(pts_src, pts_dst, label_src, label_dst, kpts_src, kpts_dst, desc_src, desc_dst, trans_gt, config_lsig, config_gss, config_mask_match):
+def MLSemReg(pts_src, pts_dst, label_src, label_dst, kpts_src, kpts_dst, desc_src, desc_dst, trans_gt, config_lsig, config_gss, config_mask_match):
     """
     e.g: all numpy ndarray
         pts_src (18944, 3) : source raw points, voxel downsample with 0.3m.
@@ -68,7 +57,7 @@ def ml_SemReg(pts_src, pts_dst, label_src, label_dst, kpts_src, kpts_dst, desc_s
     # 2. SCM er
     scmer = GroupingMatcher(nss_src, nss_dst, config_lsig=config_lsig)
 
-    # 3. BMR-SS
+    # 3. BMR-SS (gss)
     (
         is_use_gss,
         guidpost_pts_src, guidpost_label_src,
@@ -96,23 +85,19 @@ def main():
     print(cmd_config)
 
     ds = DataLoader()
-    rslt_eval_rc = []
     for idx in tqdm(range(len(ds))):
         data = ds.get_item(idx)
         pts_src, label_src, kpts_src, desc_src, pts_dst, label_dst, kpts_dst, desc_dst, trans_gt = data
         evaluator.update_pair(pts_src, pts_dst, trans_gt=trans_gt)
 
         # matching
-        if cmd_config.is_use_baseline_nn:
-            corres = matcher_nn(desc_src, desc_dst)
-        else:
-            corres = ml_SemReg(pts_src, pts_dst, label_src, label_dst, kpts_src, kpts_dst, desc_src, desc_dst, trans_gt, config_lsig, config_gss, config_mask_match)
-        
+        corres = MLSemReg(pts_src, pts_dst, label_src, label_dst, kpts_src, kpts_dst, desc_src, desc_dst, trans_gt, config_lsig, config_gss, config_mask_match)
+    
         # evaluation
         kpts_src = kpts_src[corres[:, 0]]
         kpts_dst = kpts_dst[corres[:, 1]]
 
-        IN, IP = evaluator.eval_corr(kpts_src, kpts_dst, is_print=False)
+        IN, IR = evaluator.eval_corr(kpts_src, kpts_dst, is_print=False)
 
         # reg sc2pcr
         reger = SC2PCR()
@@ -125,35 +110,18 @@ def main():
         # eval
         rmse, rre, rte, is_success = evaluator.eval_trans(trans=trans_pred)
 
-        # 
-        
-        rslt_eval = [IN, IP, rmse, rre, rte, is_success]
-        # print(rslt_eval)
-        rslt_eval_rc.append(rslt_eval)
-
-    
-    rslt_eval_rc = np.asarray(rslt_eval_rc)
-    mean_in = np.mean(rslt_eval_rc[:, 0])
-    mean_ir = np.mean(rslt_eval_rc[:, 1]) * 100
-    is_success = rslt_eval_rc[:, 5] == 1
-    mean_re = np.mean(rslt_eval_rc[is_success, 3])
-    mean_te = np.mean(rslt_eval_rc[is_success, 4]) * 100
-    RR = np.mean(is_success) * 100
-    np.mean(rslt_eval_rc, axis=0)
-    print( 
-        "Inlier Number: {:.3f}".format(mean_in), 
-        "Inlier Ratio: {:.3f}%".format(mean_ir), 
-        "Rotation Error: {:.3f} degree".format(mean_re), 
-        "Translation Error: {:.3f} cm".format(mean_te), 
-        "Success Rate: {:.3f}%".format(RR), sep="\n"
-    )
+        print( 
+            "\nInlier Number: {:.3f}".format(IN), 
+            "Inlier Ratio: {:.3f}%".format(IR * 100), 
+            "Rotation Error: {:.3f} degree".format(rre), 
+            "Translation Error: {:.3f} cm".format(rte * 100), 
+            "Is Successful: {}".format(is_success), sep="\n"
+        )
 
 if __name__=="__main__":
     main()
 
 """
 python -m demo
-python -m demo -is_use_baseline
 python -m demo -is_vis
-python -m demo -is_vis -is_use_baseline
 """

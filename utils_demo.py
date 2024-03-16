@@ -2,8 +2,6 @@ import os
 import open3d as o3d
 import numpy as np
 
-
-
 data_names = [
     "pts_src", 
     "label_src", 
@@ -34,7 +32,6 @@ def get_cmd_config():
     from argparse import ArgumentParser
     parse = ArgumentParser()
     parse.add_argument("-is_vis", default=False, action="store_true")
-    parse.add_argument("-is_use_baseline_nn", default=False, action="store_true", help="Use Nearest Neighbor Matching.")
     return parse.parse_args()
 
 def vis_pcr_pcd(pts_src, pts_dst, trans):

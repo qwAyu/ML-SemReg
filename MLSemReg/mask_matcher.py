@@ -1,5 +1,10 @@
 import numpy as np
+import taichi as ti
+import taichi.math as tm
+import eval_taichi
 
+ti.init(ti.gpu)
+ 
 
 def get_topx_same_consis_matrix(same_matrix, topx):
     N_dst = same_matrix.shape[1]
@@ -10,17 +15,7 @@ def get_topx_same_consis_matrix(same_matrix, topx):
     return global_consis
 
 
-# def get_same_matrix(gss_src, gss_dst):
-#     same_matrix = np.sum(np.bitwise_and(
-#         gss_src[:, None, ...], gss_dst[None, ...]), axis=(-1, -2))
 
-#     return same_matrix
-
-import taichi as ti
-import taichi.math as tm
-
-ti.init(ti.gpu)
- 
 @ti.kernel
 def taichi_calc_same_matrix2(
     out: ti.types.ndarray(ndim=2, dtype=ti.int32), 
@@ -101,10 +96,7 @@ def taichi_calc_grades(
             if row_max[i] < scene_similar[i, j]:
                 row_max[i] = scene_similar[i, j] - (topx - 1)
 
-    # ti.simt.block.sync()
-    # to mask
     ti.loop_config(serialize=False) # Disable auto-parallelism in Taichi
-    # for i,j in ti.ndrange(gss_src.shape[0], gss_dst.shape[1]):
     for I in ti.grouped(out_grades):
         out_grades[I] = 0
         # if row_max[i] >= 1 and scene_similar[i, j] >= row_max[i]:
@@ -156,9 +148,7 @@ def maskmatcher_nn(
     **kwargs
 ):
     # global match
-    import eval_taichi
     if not eval_taichi.is_use_taich:
-        # eval_taichi.timer("same_matrix_gr")
         same_matrix, grades = get_nn_select_raw_material(desc_src, desc_dst,
                                                         gss_src, gss_dst,
                                                         topx)

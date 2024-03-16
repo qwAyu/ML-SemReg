@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.cluster import DBSCAN
 from sklearn.neighbors import KDTree
-
+import eval_taichi
 from utils.voxel_downsample import voxel_downsample_with_label
 
 
@@ -148,95 +148,6 @@ def get_anchor_pts_with_labels_outdoor(
     )
 
 
-def get_anchor_pts_with_labels_indoor(
-    pts_src, label_src,
-    pts_dst, label_dst,
-    anchor_voxel_size,
-    is_vis_guidpost=False,
-    is_return_guidpost=False,
-    **kwargs
-
-):
-    # get_guidpost downsample with label
-    gp_pts_src, gp_labels_src = voxel_downsample_with_label(
-        pts_src, label_src, voxel_size=anchor_voxel_size)
-    gp_pts_dst, gp_labels_dst = voxel_downsample_with_label(
-        pts_dst, label_dst, voxel_size=anchor_voxel_size)
-
-    # label affine
-    label_unique = np.intersect1d(
-        np.unique(gp_labels_src), np.unique(gp_labels_dst))
-    label_unique = np.setdiff1d(
-        label_unique, np.asarray([0]))  # filter label-0 (noise)
-
-    gp_pts_src_list = []
-    gp_labels_src_list = []
-    gp_pts_dst_list = []
-    gp_labels_dst_list = []
-
-    num_label_type = len(label_unique)
-
-    for idx_label, l in enumerate(label_unique):
-        # src
-        indic_src = gp_labels_src == idx_label
-        gp_pts_src_list.append(gp_pts_src[indic_src])
-        gp_labels_src_list.append(gp_labels_src[indic_src])
-
-        # dst
-        indic_dst = gp_labels_dst == idx_label
-        gp_pts_dst_list.append(gp_pts_dst[indic_dst])
-        gp_labels_dst_list.append(gp_labels_dst[indic_dst])
-
-    gp_pts_src = np.vstack(gp_pts_src_list)
-    gp_labels_src = np.concatenate(gp_labels_src_list)
-
-    gp_pts_dst = np.vstack(gp_pts_dst_list)
-    gp_labels_dst = np.concatenate(gp_labels_dst_list)
-
-    return (
-        gp_pts_src, gp_labels_src,
-        gp_pts_dst, gp_labels_dst, num_label_type
-    )
-
-
-def grab_gss_with_power_dis(kpts, guidpost_pts, guidpost_label,
-                            max_num_label,
-                            N,
-                            L,
-                            num_label_type,
-                            **args):
-    # alpha = 1.1
-    alpha = 1.5
-    x = np.arange(N+1)
-    inner_rs = x**alpha
-    outer_rs = inner_rs[1:]
-    inner_rs = inner_rs[:-1]
-    max_radiu = outer_rs[-1]
-
-    gss = np.full(shape=(
-        len(kpts), N, num_label_type
-    ), fill_value=False, dtype=np.ubyte)
-    tree = KDTree(guidpost_pts)
-    idxs, diss = tree.query_radius(
-        kpts, r=max_radiu, return_distance=True)  
-    for i in range(len(diss)):  
-        # idxs_ring = np.floor(diss[i] / L).astype(np.int32)
-        idxs_ring = np.floor(np.exp(np.log(diss[i]) / alpha)).astype(np.int32)
-
-        for idx_r in range(N):
-            if not np.any(idxs_ring == idx_r):  
-                continue
-
-            
-            indic = idxs_ring == idx_r
-            label_seg = np.unique(
-                guidpost_label[idxs[i][indic]])  
-
-            gss[i, idx_r, label_seg] = True
-
-    return gss
-
-
 import taichi as ti
 @ti.kernel
 def taich_grab_gss(
@@ -285,7 +196,6 @@ def grab_gss(
 
     max_radiu = 60
     """
-    import eval_taichi
     if not eval_taichi.is_use_taich:
         gss = np.full(shape=(
             len(kpts), N, num_label_type
@@ -313,35 +223,3 @@ def grab_gss(
         taich_grab_gss(out, kpts.astype(np.float32), guidpost_pts.astype(np.float32), guidpost_label.astype(np.int32), N, L)
     
         return out
-
-
-
-
-def grab_gss_out_in_door(pts_src, labels_src, kpts_src,
-                         pts_dst, labels_dst, kpts_dst, config):
-    if config.dataset.name == "kitti":
-        (
-            is_use_gss,
-            guidpost_pts_src, guidpost_label_src,
-            guidpost_pts_dst, guidpost_label_dst, num_label_type
-        ) = get_anchor_pts_with_labels_outdoor(pts_src, labels_src, pts_dst, labels_dst, **config.gss)
-
-    elif config.dataset.name == "scannet":
-        (
-            guidpost_pts_src, guidpost_label_src,
-            guidpost_pts_dst, guidpost_label_dst, num_label_type
-        ) = get_anchor_pts_with_labels_indoor(pts_src, labels_src, pts_dst, labels_dst, **config.gss)
-        is_use_gss = True
-    else:
-        raise NotImplemented("dataset name error")
-
-    if not is_use_gss:
-        return False, None, None
-    else:
-        gss_src = grab_gss(kpts_src, guidpost_pts_src,
-                           guidpost_label_src, **config.gss, num_label_type=num_label_type)
-        gss_dst = grab_gss(kpts_dst, guidpost_pts_dst,
-                           guidpost_label_dst, **config.gss, num_label_type=num_label_type)
-
-        
-        return True, gss_src, gss_dst

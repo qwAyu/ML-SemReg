@@ -1,1 +1,0 @@
-# copy from https://github.com/ZhiChen902/SC2-PCR

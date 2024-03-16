@@ -1,9 +1,7 @@
-# copy from https://github.com/ZhiChen902/SC2-PCR
 import torch
 from SC2PCR.common import knn, rigid_transform_3d
 from utils_sc2pcr.SE3 import transform
 import numpy as np
-
 
 
 class Matcher():
